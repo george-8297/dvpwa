@@ -1,8 +1,9 @@
 import logging
+import yaml
 from datetime import datetime
 from itertools import groupby
 
-from aiohttp.web import Request, HTTPFound
+from aiohttp.web import Request, HTTPFound, Response
 from aiohttp.web_exceptions import HTTPNotFound, HTTPForbidden
 from aiohttp_jinja2 import template
 from aiohttp_session import get_session
@@ -41,6 +42,9 @@ async def index(request: Request):
         if user and user.check_password(password):
             session['user_id'] = user.id
             auth_user = user
+            # VULN: Open redirect — no validation of 'next' parameter
+            next_url = request.query.get('next', '/')
+            raise HTTPFound(next_url)
         else:
             errors.append('Invalid username or password')
     return {'last_visited': last_visited,
@@ -151,6 +155,42 @@ async def evaluate(request: Request):
         await Mark.create(conn, student_id, course_id,
                           data['points'])
     raise HTTPFound(f'/courses/{course_id}')
+
+
+@template('profile.jinja2')
+async def user_profile(request: Request):
+    """VULNERABILITY: Insecure Direct Object Reference (IDOR)
+    Any user can view any other user's profile (including password hash)
+    by simply changing the user ID in the URL. No authorization check.
+    """
+    app = request.app
+    user_id = int(request.match_info['id'])
+    # VULN: No check that the requesting user is authorized to view this profile
+    async with app['db'].acquire() as conn:
+        profile_user = await User.get(conn, user_id)
+        if not profile_user:
+            raise HTTPNotFound()
+    return {'profile_user': profile_user}
+
+
+async def search(request: Request):
+    """VULNERABILITY: Unsafe YAML deserialization
+    User-controlled input is passed to yaml.load() without SafeLoader,
+    allowing arbitrary Python object instantiation.
+    """
+    query = request.query.get('q', '')
+
+    # VULN: Unsafe YAML load — yaml.load without SafeLoader allows
+    # arbitrary code execution via crafted YAML payloads
+    try:
+        parsed = yaml.load(query)
+    except Exception:
+        parsed = None
+
+    return Response(
+        text=f"Search results for: {parsed}",
+        content_type='text/plain'
+    )
 
 
 @authorize()

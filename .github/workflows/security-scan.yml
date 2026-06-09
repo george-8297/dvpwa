@@ -60,20 +60,26 @@ jobs:
             echo '[]' > resultados/scan-before/gitleaks-results.json
           fi
 
+      - name: Generate triage prompt
+        if: always()
+        run: |
+          mkdir -p resultados/prompts
+          python3 .github/scripts/generate-triage-prompt.py
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-scan-results
-          path: resultados/scan-before/
+          path: resultados/
 
       - name: Commit and push results
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add resultados/scan-before/
+          git add resultados/scan-before/ resultados/prompts/
           if ! git diff --cached --quiet; then
-            git commit -m "chore: add security scan results [skip ci]"
+            git commit -m "chore: add security scan results and triage prompt [skip ci]"
             git push
           fi
